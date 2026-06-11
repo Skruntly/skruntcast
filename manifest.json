@@ -1,0 +1,12 @@
+{
+  "name": "SkruntCast",
+  "short_name": "SkruntCast",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0f1923",
+  "theme_color": "#111d2e",
+  "start_url": "/",
+  "icons": [
+    { "src": "https://openweathermap.org/img/wn/02d@2x.png", "sizes": "100x100", "type": "image/png" }
+  ]
+}
