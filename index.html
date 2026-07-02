@@ -272,12 +272,13 @@ async function fetchCurrent(lat, lon) {
 
 async function fetchHourly(lat, lon) {
   const r = await fetch('https://api.open-meteo.com/v1/forecast?latitude=' + lat + '&longitude=' + lon +
-    '&hourly=temperature_2m,relative_humidity_2m,precipitation_probability,weather_code,wind_speed_10m' +
+    '&hourly=temperature_2m,relative_humidity_2m,apparent_temperature,precipitation_probability,weather_code,wind_speed_10m' +
     '&temperature_unit=fahrenheit&wind_speed_unit=mph&forecast_days=7');
   const d = await r.json();
   const h = d.hourly;
   return h.time.map(function(t, i) {
     return { time: new Date(t), temp: h.temperature_2m[i], humidity: h.relative_humidity_2m[i],
+             feels: h.apparent_temperature[i],
              precip: h.precipitation_probability[i], code: h.weather_code[i], wind: h.wind_speed_10m[i] };
   });
 }
@@ -330,6 +331,7 @@ function renderHourly(hours) {
       '<span class="hr-icon">' + emoji(h.code) + '</span>' +
       '<span class="hr-temp">' + Math.round(h.temp) + '°</span>' +
       '<div class="hr-stats">' +
+        '<span>🌡️ Feels ' + Math.round(h.feels) + '°</span>' +
         '<span>💧 ' + Math.round(h.precip) + '%</span>' +
         '<span>💨 ' + Math.round(h.wind) + ' mph</span>' +
         '<span>💦 ' + Math.round(h.humidity) + '%</span>' +
@@ -481,7 +483,7 @@ document.addEventListener('DOMContentLoaded', function() {
   input.addEventListener('keydown', function(e){ if (e.key === 'Enter') doSearch(); });
 
   var h = histLoad();
-  if (h.length) { input.value = h[0]; }
+  if (h.length) { input.value = h[0]; doSearch(); }
 });
 </script>
 </body>
