@@ -113,7 +113,7 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:-apple-
     <div id="app-title">⛅ SkruntCast</div>
     <div id="search-row">
       <input id="search-input" type="text" placeholder="City or zip code…" autocomplete="off" autocorrect="off" spellcheck="false">
-      <button id="search-btn" onclick="doSearch()">&#x2315;</button>
+      <button id="search-btn" onclick="doSearch()"><span style="display:inline-block;transform:scaleX(-1)">&#x2315;</span></button>
     </div>
     <div id="history-drop" hidden></div>
     <div id="status-line"></div>
@@ -151,7 +151,7 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:-apple-
 
     <!-- 14-Day -->
     <div id="tab-daily" class="tab">
-      <div class="empty"><div class="e-icon">📅</div><p>Search for a location to see the 14-day forecast.</p></div>
+      <div class="empty"><div class="e-icon">🗓️</div><p>Search for a location to see the 14-day forecast.</p></div>
     </div>
 
     <!-- Radar -->
@@ -170,7 +170,7 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:-apple-
   <nav id="bottom-nav">
     <button class="nav-btn active" id="nav-current" onclick="showTab('current')"><span class="ico">⛅</span>Current</button>
     <button class="nav-btn" id="nav-hourly" onclick="showTab('hourly')"><span class="ico">🕐</span>Hourly</button>
-    <button class="nav-btn" id="nav-daily" onclick="showTab('daily')"><span class="ico">📅</span>14-Day</button>
+    <button class="nav-btn" id="nav-daily" onclick="showTab('daily')"><span class="ico">🗓️</span>14-Day</button>
     <button class="nav-btn" id="nav-radar" onclick="showTab('radar')"><span class="ico">🌧️</span>Radar</button>
   </nav>
 
