@@ -148,9 +148,9 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:-apple-
       <div class="empty"><div class="e-icon">🕐</div><p>Search for a location to see the hourly forecast.</p></div>
     </div>
 
-    <!-- 7-Day -->
+    <!-- 14-Day -->
     <div id="tab-daily" class="tab">
-      <div class="empty"><div class="e-icon">📅</div><p>Search for a location to see the 7-day forecast.</p></div>
+      <div class="empty"><div class="e-icon">📅</div><p>Search for a location to see the 14-day forecast.</p></div>
     </div>
 
     <!-- Radar -->
@@ -169,7 +169,7 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:-apple-
   <nav id="bottom-nav">
     <button class="nav-btn active" id="nav-current" onclick="showTab('current')"><span class="ico">⛅</span>Current</button>
     <button class="nav-btn" id="nav-hourly" onclick="showTab('hourly')"><span class="ico">🕐</span>Hourly</button>
-    <button class="nav-btn" id="nav-daily" onclick="showTab('daily')"><span class="ico">📅</span>7-Day</button>
+    <button class="nav-btn" id="nav-daily" onclick="showTab('daily')"><span class="ico">📅</span>14-Day</button>
     <button class="nav-btn" id="nav-radar" onclick="showTab('radar')"><span class="ico">🌧️</span>Radar</button>
   </nav>
 
@@ -273,7 +273,7 @@ async function fetchCurrent(lat, lon) {
 async function fetchHourly(lat, lon) {
   const r = await fetch('https://api.open-meteo.com/v1/forecast?latitude=' + lat + '&longitude=' + lon +
     '&hourly=temperature_2m,relative_humidity_2m,apparent_temperature,precipitation_probability,weather_code,wind_speed_10m' +
-    '&temperature_unit=fahrenheit&wind_speed_unit=mph&forecast_days=7');
+    '&temperature_unit=fahrenheit&wind_speed_unit=mph&forecast_days=14');
   const d = await r.json();
   const h = d.hourly;
   return h.time.map(function(t, i) {
@@ -286,7 +286,7 @@ async function fetchHourly(lat, lon) {
 async function fetchDaily(lat, lon) {
   const r = await fetch('https://api.open-meteo.com/v1/forecast?latitude=' + lat + '&longitude=' + lon +
     '&daily=temperature_2m_max,temperature_2m_min,weather_code,precipitation_probability_max' +
-    '&temperature_unit=fahrenheit&forecast_days=7');
+    '&temperature_unit=fahrenheit&forecast_days=14');
   const d = await r.json();
   const day = d.daily;
   return day.time.map(function(t, i) {
