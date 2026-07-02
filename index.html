@@ -328,9 +328,9 @@ function renderCurrent(c) {
 
 function bgGradient(code, isDay) {
   const sets = [
-    { test: n => n===0,               day:['#1c74d1','#4a9be8'], night:['#050b18','#131f33'] },
-    { test: n => n===1,               day:['#2277c9','#55a3e0'], night:['#070d1c','#162236'] },
-    { test: n => n===2,               day:['#48607a','#7591ab'], night:['#0c121c','#232f3f'] },
+    { test: n => n===0,               day:['#0d5bb5','#2b96e3','#eaf6ff'], night:['#050b18','#131f33'], sun:true },
+    { test: n => n===1,               day:['#1465bd','#3aa0e6','#e3f3ff'], night:['#070d1c','#162236'], sun:true },
+    { test: n => n===2,               day:['#3c5b78','#6f93b3','#c9dced'], night:['#0c121c','#232f3f'], sun:true },
     { test: n => n===3,               day:['#4a5460','#6b7684'], night:['#14181f','#2c333c'] },
     { test: n => n===45||n===48,      day:['#5c6670','#8a949e'], night:['#181c22','#333a42'] },
     { test: n => n>=51&&n<=55,        day:['#3c5870','#5e7f99'], night:['#0a141f','#1c2e40'] },
@@ -341,8 +341,12 @@ function bgGradient(code, isDay) {
     { test: n => n>=95,               day:['#241f38','#443a5e'], night:['#0a0812','#1a1526'] },
   ];
   const m = sets.find(s => s.test(code));
-  const colors = m ? (isDay ? m.day : m.night) : (isDay ? ['#1c74d1','#4a9be8'] : ['#050b18','#131f33']);
-  return 'linear-gradient(180deg, ' + colors[0] + ', ' + colors[1] + ')';
+  const colors = m ? (isDay ? m.day : m.night) : (isDay ? ['#0d5bb5','#2b96e3','#eaf6ff'] : ['#050b18','#131f33']);
+  const sky = 'linear-gradient(180deg, ' + colors.join(', ') + ')';
+  if (isDay && m && m.sun) {
+    return 'radial-gradient(circle at 78% 12%, rgba(255,244,190,.65), rgba(255,244,190,0) 32%), ' + sky;
+  }
+  return sky;
 }
 
 function renderHourly(hours) {
