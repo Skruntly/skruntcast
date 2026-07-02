@@ -53,11 +53,12 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:-apple-
 .nav-btn:active{opacity:.6}
 
 /* ── Current Tab ── */
-#loc-name{font-size:20px;font-weight:700;color:var(--blue);margin-bottom:16px}
+#tab-current{background:var(--bg);transition:background 1.2s ease}
+#loc-name{font-size:20px;font-weight:700;color:var(--blue);margin-bottom:16px;text-shadow:0 1px 3px rgba(0,0,0,.35)}
 #curr-wrap{display:flex;flex-direction:column;margin-bottom:20px}
 #curr-icon{font-size:68px;line-height:1;margin-bottom:4px}
-#curr-temp{font-size:62px;font-weight:700;line-height:1;margin-bottom:6px}
-#curr-desc{font-size:18px;color:var(--sub)}
+#curr-temp{font-size:62px;font-weight:700;line-height:1;margin-bottom:6px;text-shadow:0 1px 4px rgba(0,0,0,.35)}
+#curr-desc{font-size:18px;color:var(--sub);text-shadow:0 1px 3px rgba(0,0,0,.35)}
 .detail-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:20px}
 .det-card{background:var(--card);border-radius:13px;padding:14px}
 .det-label{font-size:11px;color:var(--sub);margin-bottom:5px;text-transform:uppercase;letter-spacing:.5px}
@@ -264,7 +265,7 @@ async function geocode(loc) {
 
 async function fetchCurrent(lat, lon) {
   const r = await fetch('https://api.open-meteo.com/v1/forecast?latitude=' + lat + '&longitude=' + lon +
-    '&current=temperature_2m,relative_humidity_2m,apparent_temperature,weather_code,wind_speed_10m,wind_direction_10m' +
+    '&current=temperature_2m,relative_humidity_2m,apparent_temperature,weather_code,wind_speed_10m,wind_direction_10m,is_day' +
     '&temperature_unit=fahrenheit&wind_speed_unit=mph');
   const d = await r.json();
   return d.current;
@@ -322,6 +323,26 @@ function renderCurrent(c) {
   document.getElementById('d-hum').textContent = Math.round(c.relative_humidity_2m) + '%';
   document.getElementById('d-wind').textContent = Math.round(c.wind_speed_10m) + ' mph';
   document.getElementById('d-dir').textContent = compass(c.wind_direction_10m);
+  document.getElementById('tab-current').style.background = bgGradient(c.weather_code, c.is_day);
+}
+
+function bgGradient(code, isDay) {
+  const sets = [
+    { test: n => n===0,               day:['#1c74d1','#4a9be8'], night:['#050b18','#131f33'] },
+    { test: n => n===1,               day:['#2277c9','#55a3e0'], night:['#070d1c','#162236'] },
+    { test: n => n===2,               day:['#48607a','#7591ab'], night:['#0c121c','#232f3f'] },
+    { test: n => n===3,               day:['#4a5460','#6b7684'], night:['#14181f','#2c333c'] },
+    { test: n => n===45||n===48,      day:['#5c6670','#8a949e'], night:['#181c22','#333a42'] },
+    { test: n => n>=51&&n<=55,        day:['#3c5870','#5e7f99'], night:['#0a141f','#1c2e40'] },
+    { test: n => n>=61&&n<=65,        day:['#2c4560','#3f6482'], night:['#060d17','#12202f'] },
+    { test: n => n>=71&&n<=75,        day:['#5f7e97','#9ab6cb'], night:['#131c28','#2c3f50'] },
+    { test: n => n>=80&&n<=82,        day:['#26404f','#3c5f76'], night:['#050b13','#0f1c28'] },
+    { test: n => n===85||n===86,      day:['#526e85','#8aa6ba'], night:['#101823','#263647'] },
+    { test: n => n>=95,               day:['#241f38','#443a5e'], night:['#0a0812','#1a1526'] },
+  ];
+  const m = sets.find(s => s.test(code));
+  const colors = m ? (isDay ? m.day : m.night) : (isDay ? ['#1c74d1','#4a9be8'] : ['#050b18','#131f33']);
+  return 'linear-gradient(180deg, ' + colors[0] + ', ' + colors[1] + ')';
 }
 
 function renderHourly(hours) {
