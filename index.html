@@ -53,7 +53,10 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:-apple-
 .nav-btn:active{opacity:.6}
 
 /* ── Current Tab ── */
-#tab-current{background:var(--bg);transition:background 1.2s ease}
+#tab-current{position:relative;background:var(--bg);transition:background 1.2s ease}
+#tab-current::before{content:'';position:absolute;inset:0;pointer-events:none;opacity:.05;mix-blend-mode:overlay;background-size:140px 140px;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E")}
+#curr-empty,#curr-loaded{position:relative}
 #loc-name{font-size:20px;font-weight:700;color:var(--blue);margin-bottom:16px;text-shadow:0 1px 3px rgba(0,0,0,.35)}
 #curr-wrap{display:flex;flex-direction:column;margin-bottom:20px}
 #curr-icon{font-size:68px;line-height:1;margin-bottom:4px}
@@ -344,7 +347,12 @@ function bgGradient(code, isDay) {
   const colors = m ? (isDay ? m.day : m.night) : (isDay ? ['#0d5bb5','#2b96e3','#eaf6ff'] : ['#050b18','#131f33']);
   const sky = 'linear-gradient(180deg, ' + colors.join(', ') + ')';
   if (isDay && m && m.sun) {
-    return 'radial-gradient(circle at 78% 12%, rgba(255,244,190,.65), rgba(255,244,190,0) 32%), ' + sky;
+    return [
+      'radial-gradient(circle at 78% 12%, rgba(255,255,255,.9), rgba(255,239,173,.6) 9%, rgba(255,239,173,0) 30%)',
+      'radial-gradient(circle at 15% 95%, rgba(255,255,255,.14), rgba(255,255,255,0) 45%)',
+      'linear-gradient(180deg, rgba(0,0,0,0) 55%, rgba(0,0,0,.15) 100%)',
+      sky
+    ].join(', ');
   }
   return sky;
 }
