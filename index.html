@@ -372,7 +372,7 @@ function toggleDay(idx, ts) {
         '<span class="s-time">' + fmtHour(h.time) + '</span>' +
         '<span class="s-icon">' + emoji(h.code) + '</span>' +
         '<span class="s-temp">' + Math.round(h.temp) + '°</span>' +
-        '<div class="s-stats"><span>💧' + Math.round(h.precip) + '%</span><span>💨' + Math.round(h.wind) + 'mph</span></div>' +
+        '<div class="s-stats"><span>🌡️Feels ' + Math.round(h.feels) + '°</span><span>💧' + Math.round(h.precip) + '%</span><span>💨' + Math.round(h.wind) + 'mph</span></div>' +
       '</div>';
     }).join('');
   }
