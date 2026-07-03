@@ -232,6 +232,7 @@ let gMinutely = [];
 let rainTimerHandle = null;
 let gAlerts = [];
 let gRadarRainingNow = null;
+let gRadarStopEstimate = null;
 let gCurrentWeatherCode = null;
 let radarCheckHandle = null;
 let radarMap = null, radarLayers = [], radarFrameData = [];
@@ -312,6 +313,7 @@ async function loadWeather() {
   initRadar();
   if (rainTimerHandle) clearInterval(rainTimerHandle);
   gRadarRainingNow = null;
+  gRadarStopEstimate = null;
   updateRainTimer();
   rainTimerHandle = setInterval(updateRainTimer, 15000);
   if (radarCheckHandle) clearInterval(radarCheckHandle);
@@ -332,6 +334,26 @@ function tileFromLonLat(lon, lat, zoom) {
   return { tileX: tileX, tileY: tileY, px: px, py: py };
 }
 
+const RADAR_ZOOM = 7; // RainViewer's tile server 404s/placeholders above zoom 7
+const RADAR_ALPHA_THRESH = 50;
+
+function loadTileImageData(path, tileX, tileY) {
+  const url = 'https://tilecache.rainviewer.com' + path + '/256/' + RADAR_ZOOM + '/' + tileX + '/' + tileY + '/2/1_1.png';
+  return new Promise(function(resolve, reject) {
+    const im = new Image();
+    im.crossOrigin = 'anonymous';
+    im.onload = function() {
+      const canvas = document.createElement('canvas');
+      canvas.width = 256; canvas.height = 256;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(im, 0, 0);
+      resolve(ctx.getImageData(0, 0, 256, 256));
+    };
+    im.onerror = function() { reject(new Error('tile load failed')); };
+    im.src = url;
+  });
+}
+
 async function checkRadarRainingNow(lat, lon) {
   try {
     const r = await fetch('https://api.rainviewer.com/public/weather-maps.json');
@@ -339,27 +361,86 @@ async function checkRadarRainingNow(lat, lon) {
     const past = d.radar && d.radar.past;
     if (!past || !past.length) return null;
     const frame = past[past.length - 1];
-    const zoom = 7; // RainViewer's tile server 404s/placeholders above zoom 7
-    const t = tileFromLonLat(lon, lat, zoom);
-    const url = 'https://tilecache.rainviewer.com' + frame.path + '/256/' + zoom + '/' + t.tileX + '/' + t.tileY + '/2/1_1.png';
-    const img = await new Promise(function(resolve, reject) {
-      const im = new Image();
-      im.crossOrigin = 'anonymous';
-      im.onload = function() { resolve(im); };
-      im.onerror = function() { reject(new Error('tile load failed')); };
-      im.src = url;
-    });
-    const canvas = document.createElement('canvas');
-    canvas.width = 256; canvas.height = 256;
-    const ctx = canvas.getContext('2d');
-    ctx.drawImage(img, 0, 0);
+    const t = tileFromLonLat(lon, lat, RADAR_ZOOM);
+    const imgData = await loadTileImageData(frame.path, t.tileX, t.tileY);
     const x0 = Math.max(0, t.px - 4), y0 = Math.max(0, t.py - 4);
     const w = Math.min(9, 256 - x0), h = Math.min(9, 256 - y0);
-    const data = ctx.getImageData(x0, y0, w, h).data;
-    for (let i = 3; i < data.length; i += 4) {
-      if (data[i] > 50) return true; // found a non-transparent (echo) pixel nearby
+    for (let yy = y0; yy < y0 + h; yy++) {
+      for (let xx = x0; xx < x0 + w; xx++) {
+        const a = imgData.data[(yy * 256 + xx) * 4 + 3];
+        if (a > RADAR_ALPHA_THRESH) return true;
+      }
     }
     return false;
+  } catch (e) { return null; }
+}
+
+// Rough storm-motion nowcast: cross-correlates two radar frames ~30min apart to
+// estimate a bulk velocity, then walks the current frame's mask upstream of that
+// velocity from our point to find how much storm depth remains before it clears.
+// Deliberately conservative — returns null (no estimate) unless the correlation
+// signal is clean, since a fabricated ETA is worse than none for severe weather.
+async function estimateRadarStopTime(lat, lon) {
+  try {
+    const r = await fetch('https://api.rainviewer.com/public/weather-maps.json');
+    const d = await r.json();
+    const past = d.radar && d.radar.past;
+    if (!past || past.length < 4) return null;
+    const nowFrame = past[past.length - 1];
+    const pastFrame = past[past.length - 4]; // ~30 min earlier at 10-min cadence
+    const intervalMin = (nowFrame.time - pastFrame.time) / 60;
+    const t = tileFromLonLat(lon, lat, RADAR_ZOOM);
+    const [nowData, pastData] = await Promise.all([
+      loadTileImageData(nowFrame.path, t.tileX, t.tileY),
+      loadTileImageData(pastFrame.path, t.tileX, t.tileY)
+    ]);
+    const W = 256, H = 256;
+    const maskAt = function(imgData, x, y) { return imgData.data[(y * W + x) * 4 + 3] > RADAR_ALPHA_THRESH ? 1 : 0; };
+
+    function scoreShift(dx, dy) {
+      let overlap = 0, union = 0;
+      const x0 = Math.max(0, -dx), x1 = Math.min(W, W - dx);
+      const y0 = Math.max(0, -dy), y1 = Math.min(H, H - dy);
+      for (let y = y0; y < y1; y++) {
+        for (let x = x0; x < x1; x++) {
+          const a = maskAt(pastData, x, y);
+          const b = maskAt(nowData, x + dx, y + dy);
+          if (a || b) { union++; if (a && b) overlap++; }
+        }
+      }
+      return union > 0 ? overlap / union : 0;
+    }
+
+    const R = 14;
+    let best = { score: -1, dx: 0, dy: 0 };
+    for (let dy = -R; dy <= R; dy++) {
+      for (let dx = -R; dx <= R; dx++) {
+        const s = scoreShift(dx, dy);
+        if (s > best.score) best = { score: s, dx: dx, dy: dy };
+      }
+    }
+    const zeroScore = scoreShift(0, 0);
+
+    const mag = Math.sqrt(best.dx * best.dx + best.dy * best.dy);
+    const confident = (best.score - zeroScore) > 0.1 && mag >= 2 && Math.abs(best.dx) < R && Math.abs(best.dy) < R;
+    if (!confident) return null;
+
+    // Walk from our point opposite the motion vector to find the trailing edge
+    // (the depth of storm still upstream of us that has yet to pass over).
+    const ux = -best.dx / mag, uy = -best.dy / mag;
+    const maxSteps = 90;
+    let clearStep = -1;
+    for (let s = 1; s <= maxSteps; s++) {
+      const x = Math.round(t.px + ux * s), y = Math.round(t.py + uy * s);
+      if (x < 0 || x >= W || y < 0 || y >= H) break; // ran off the tile — can't tell
+      if (!maskAt(nowData, x, y)) { clearStep = s; break; }
+    }
+    if (clearStep === -1) return null;
+
+    const speedPxPerMin = mag / intervalMin;
+    const etaMin = clearStep / speedPxPerMin;
+    if (etaMin < 5 || etaMin > 240) return null; // outside a trustworthy range
+    return new Date(Date.now() + etaMin * 60000);
   } catch (e) { return null; }
 }
 
@@ -369,8 +450,15 @@ async function refreshRadarCheck() {
   const result = await checkRadarRainingNow(myLat, myLon);
   if (myLat !== gLat || myLon !== gLon) return; // location changed while this was in flight
   gRadarRainingNow = result;
+  gRadarStopEstimate = null;
   applyRadarOverride();
   updateRainTimer();
+  if (result === true) {
+    const estimate = await estimateRadarStopTime(myLat, myLon);
+    if (myLat !== gLat || myLon !== gLon) return;
+    gRadarStopEstimate = estimate;
+    updateRainTimer();
+  }
 }
 
 function applyRadarOverride() {
@@ -662,9 +750,13 @@ function updateRainTimer() {
   const modelRainingNow = isRaining(gMinutely[idx]);
 
   if (gRadarRainingNow === true && !modelRainingNow) {
-    // Radar sees active precip that the forecast model missed entirely —
-    // no reliable stop estimate exists, so don't pretend the model's timeline applies.
-    renderRainTimer({ mode: 'raining-indef' });
+    // Radar sees active precip that the forecast model missed entirely — the
+    // model's own timeline can't be trusted, but a radar motion estimate may exist.
+    if (gRadarStopEstimate) {
+      renderRainTimer({ mode: 'stopping', target: gRadarStopEstimate, estimated: true });
+    } else {
+      renderRainTimer({ mode: 'raining-indef' });
+    }
     return;
   }
 
@@ -715,7 +807,8 @@ function renderRainTimer(state) {
     wrap.classList.toggle('pulse', state.mode === 'stopping');
     icon.textContent = state.mode === 'stopping' ? '☔' : '🌧️';
     timeEl.textContent = fmtDuration(remaining);
-    label.textContent = state.mode === 'stopping' ? 'until rain stops' : 'until rain starts';
+    const baseLabel = state.mode === 'stopping' ? 'until rain stops' : 'until rain starts';
+    label.textContent = state.estimated ? (baseLabel + ' (est.)') : baseLabel;
   } else if (state.mode === 'raining-indef') {
     wrap.style.display = 'none';
     pill.style.display = 'inline-flex';
