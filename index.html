@@ -67,6 +67,20 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:-apple-
 .det-label{font-size:11px;color:var(--sub);margin-bottom:5px;text-transform:uppercase;letter-spacing:.5px}
 .det-val{font-size:19px;font-weight:600}
 
+/* ── Rain Timer ── */
+#rain-timer-wrap{position:relative;width:128px;height:128px;margin:2px auto 22px;display:none;align-items:center;justify-content:center;background:rgba(6,12,22,.4);border-radius:50%;box-shadow:0 2px 10px rgba(0,0,0,.25)}
+#rain-ring{transform:rotate(-90deg)}
+.rt-track{fill:none;stroke:rgba(255,255,255,.15);stroke-width:8}
+.rt-progress{fill:none;stroke:var(--accent);stroke-width:8;stroke-linecap:round;transition:stroke-dashoffset 1s linear,stroke .4s}
+.rt-progress.raining{stroke:#5ec8e0}
+#rain-timer-wrap.pulse .rt-progress{animation:rtpulse 2s ease-in-out infinite}
+@keyframes rtpulse{0%,100%{opacity:1}50%{opacity:.5}}
+.rt-center{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;text-shadow:0 1px 3px rgba(0,0,0,.6)}
+.rt-icon{font-size:22px;margin-bottom:2px}
+.rt-time{font-size:23px;font-weight:800;line-height:1.1;color:#fff}
+.rt-label{font-size:11px;color:#dbe6f2;text-transform:uppercase;letter-spacing:.4px;margin-top:4px;max-width:92px}
+#rain-pill{display:none;align-items:center;gap:6px;background:var(--card);border-radius:20px;padding:7px 14px;font-size:13px;color:var(--text);margin:2px auto 20px;width:fit-content}
+
 /* ── Hourly Tab ── */
 .hour-card{background:var(--card);border-radius:12px;padding:11px 14px;margin-bottom:7px;display:flex;align-items:center;gap:10px}
 .hr-time{width:52px;font-size:12px;color:var(--sub);flex-shrink:0}
@@ -138,6 +152,18 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:-apple-
           <div id="curr-temp"></div>
           <div id="curr-desc"></div>
         </div>
+        <div id="rain-timer-wrap">
+          <svg id="rain-ring" viewBox="0 0 120 120" width="128" height="128">
+            <circle class="rt-track" cx="60" cy="60" r="52"></circle>
+            <circle class="rt-progress" id="rt-progress" cx="60" cy="60" r="52"></circle>
+          </svg>
+          <div class="rt-center">
+            <div class="rt-icon" id="rt-icon">🌧️</div>
+            <div class="rt-time" id="rt-time">--</div>
+            <div class="rt-label" id="rt-label">until rain starts</div>
+          </div>
+        </div>
+        <div id="rain-pill"></div>
         <div class="detail-grid">
           <div class="det-card"><div class="det-label">Feels Like</div><div class="det-val" id="d-feels"></div></div>
           <div class="det-card"><div class="det-label">Humidity</div><div class="det-val" id="d-hum"></div></div>
@@ -182,6 +208,8 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:-apple-
 // ── State ──────────────────────────────────────────────────
 let gLat, gLon, gName;
 let allHourly = [];
+let gMinutely = [];
+let rainTimerHandle = null;
 let radarMap = null, radarLayers = [], radarFrameData = [];
 let radarCur = 0, radarPlaying = true, radarTimer = null;
 let openDayEl = null;
@@ -230,18 +258,23 @@ async function doSearch() {
   try {
     const geo = await geocode(loc);
     gLat = geo.lat; gLon = geo.lon; gName = geo.name;
-    const [curr, hourly, daily] = await Promise.all([
+    const [curr, hourly, daily, minutely] = await Promise.all([
       fetchCurrent(gLat, gLon),
       fetchHourly(gLat, gLon),
-      fetchDaily(gLat, gLon)
+      fetchDaily(gLat, gLon),
+      fetchMinutely(gLat, gLon)
     ]);
     allHourly = hourly;
+    gMinutely = minutely;
     renderCurrent(curr);
     const cutoff = new Date(Date.now() - 30*60*1000);
     renderHourly(allHourly.filter(h => h.time >= cutoff).slice(0, 24));
     renderDaily(daily);
     initRadar();
     histAdd(loc);
+    if (rainTimerHandle) clearInterval(rainTimerHandle);
+    updateRainTimer();
+    rainTimerHandle = setInterval(updateRainTimer, 15000);
     setStatus('Updated ' + fmtTime(new Date()), 'green');
   } catch(e) {
     setStatus('Error: ' + e.message, 'red');
@@ -302,6 +335,17 @@ async function fetchDaily(lat, lon) {
   });
 }
 
+async function fetchMinutely(lat, lon) {
+  const r = await fetch('https://api.open-meteo.com/v1/forecast?latitude=' + lat + '&longitude=' + lon +
+    '&minutely_15=precipitation,weather_code&forecast_days=2');
+  const d = await r.json();
+  const m = d.minutely_15;
+  if (!m) return [];
+  return m.time.map(function(t, i) {
+    return { time: new Date(t), precip: m.precipitation[i], code: m.weather_code[i] };
+  });
+}
+
 async function fetchRadarFrames() {
   try {
     const r = await fetch('https://api.rainviewer.com/public/weather-maps.json');
@@ -355,6 +399,79 @@ function bgGradient(code, isDay) {
     ].join(', ');
   }
   return sky;
+}
+
+// ── Rain Timer ─────────────────────────────────────────────
+function isRainCode(code) {
+  return (code >= 51 && code <= 67) || (code >= 80 && code <= 82) || code >= 95;
+}
+
+function updateRainTimer() {
+  if (!gMinutely.length) { renderRainTimer({ mode: 'none' }); return; }
+  const THRESH = 0.1; // mm per 15-min slot
+  const now = new Date();
+  let idx = 0;
+  for (let i = 0; i < gMinutely.length; i++) {
+    if (gMinutely[i].time <= now) idx = i; else break;
+  }
+  const isRaining = s => s.precip >= THRESH && isRainCode(s.code);
+  const rainingNow = isRaining(gMinutely[idx]);
+
+  let transitionIdx = -1;
+  for (let i = idx + 1; i < gMinutely.length; i++) {
+    if (isRaining(gMinutely[i]) !== rainingNow) { transitionIdx = i; break; }
+  }
+
+  if (transitionIdx === -1) {
+    renderRainTimer({ mode: rainingNow ? 'raining-indef' : 'none' });
+    return;
+  }
+  const target = gMinutely[transitionIdx].time;
+  if (!rainingNow) {
+    const SHOW_WITHIN = 15 * 60 * 1000; // only surface an upcoming start once it's imminent
+    if (target - now > SHOW_WITHIN) { renderRainTimer({ mode: 'none' }); return; }
+    renderRainTimer({ mode: 'starting', target: target });
+    return;
+  }
+  renderRainTimer({ mode: 'stopping', target: target });
+}
+
+function fmtDuration(ms) {
+  const totalMin = Math.max(0, Math.round(ms / 60000));
+  const h = Math.floor(totalMin / 60), m = totalMin % 60;
+  return h > 0 ? (h + 'h ' + m + 'm') : (m + 'm');
+}
+
+function renderRainTimer(state) {
+  const wrap = document.getElementById('rain-timer-wrap');
+  const pill = document.getElementById('rain-pill');
+  const progress = document.getElementById('rt-progress');
+  const icon = document.getElementById('rt-icon');
+  const timeEl = document.getElementById('rt-time');
+  const label = document.getElementById('rt-label');
+  const CIRC = 2 * Math.PI * 52;
+
+  if (state.mode === 'starting' || state.mode === 'stopping') {
+    wrap.style.display = 'flex';
+    pill.style.display = 'none';
+    const remaining = Math.max(0, state.target - new Date());
+    const REF = 3 * 60 * 60 * 1000; // ring reads "full" beyond 3h out
+    const frac = Math.min(1, remaining / REF);
+    progress.style.strokeDasharray = CIRC;
+    progress.style.strokeDashoffset = CIRC * (1 - frac);
+    progress.classList.toggle('raining', state.mode === 'stopping');
+    wrap.classList.toggle('pulse', state.mode === 'stopping');
+    icon.textContent = state.mode === 'stopping' ? '☔' : '🌧️';
+    timeEl.textContent = fmtDuration(remaining);
+    label.textContent = state.mode === 'stopping' ? 'until rain stops' : 'until rain starts';
+  } else if (state.mode === 'raining-indef') {
+    wrap.style.display = 'none';
+    pill.style.display = 'inline-flex';
+    pill.innerHTML = '☔ Raining now';
+  } else {
+    wrap.style.display = 'none';
+    pill.style.display = 'none';
+  }
 }
 
 function renderHourly(hours) {
