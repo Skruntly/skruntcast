@@ -644,7 +644,7 @@ async function fetchHourly(lat, lon) {
   const d = await r.json();
   const h = d.hourly;
   return h.time.map(function(t, i) {
-    return { time: new Date(t), temp: h.temperature_2m[i], humidity: h.relative_humidity_2m[i],
+    return { time: new Date(t + 'Z'), temp: h.temperature_2m[i], humidity: h.relative_humidity_2m[i],
              feels: h.apparent_temperature[i],
              precip: h.precipitation_probability[i], code: h.weather_code[i], wind: h.wind_speed_10m[i] };
   });
