@@ -424,7 +424,7 @@ async function fetchMinutely(lat, lon) {
   const m = d.minutely_15;
   if (!m) return [];
   return m.time.map(function(t, i) {
-    return { time: new Date(t), precip: m.precipitation[i], code: m.weather_code[i] };
+    return { time: new Date(t + 'Z'), precip: m.precipitation[i], code: m.weather_code[i] };
   });
 }
 
