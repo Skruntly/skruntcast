@@ -231,6 +231,9 @@ let allHourly = [];
 let gMinutely = [];
 let rainTimerHandle = null;
 let gAlerts = [];
+let gRadarRainingNow = null;
+let gCurrentWeatherCode = null;
+let radarCheckHandle = null;
 let radarMap = null, radarLayers = [], radarFrameData = [];
 let radarCur = 0, radarPlaying = true, radarTimer = null;
 let openDayEl = null;
@@ -308,8 +311,83 @@ async function loadWeather() {
   renderDaily(daily);
   initRadar();
   if (rainTimerHandle) clearInterval(rainTimerHandle);
+  gRadarRainingNow = null;
   updateRainTimer();
   rainTimerHandle = setInterval(updateRainTimer, 15000);
+  if (radarCheckHandle) clearInterval(radarCheckHandle);
+  refreshRadarCheck();
+  radarCheckHandle = setInterval(refreshRadarCheck, 120000);
+}
+
+// ── Radar ground-truth (catches storms the forecast model missed) ──
+function tileFromLonLat(lon, lat, zoom) {
+  const latRad = lat * Math.PI / 180;
+  const n = Math.pow(2, zoom);
+  const xFloat = (lon + 180) / 360 * n;
+  const yFloat = (1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2 * n;
+  const tileX = Math.floor(xFloat);
+  const tileY = Math.floor(yFloat);
+  const px = Math.floor((xFloat - tileX) * 256);
+  const py = Math.floor((yFloat - tileY) * 256);
+  return { tileX: tileX, tileY: tileY, px: px, py: py };
+}
+
+async function checkRadarRainingNow(lat, lon) {
+  try {
+    const r = await fetch('https://api.rainviewer.com/public/weather-maps.json');
+    const d = await r.json();
+    const past = d.radar && d.radar.past;
+    if (!past || !past.length) return null;
+    const frame = past[past.length - 1];
+    const zoom = 7; // RainViewer's tile server 404s/placeholders above zoom 7
+    const t = tileFromLonLat(lon, lat, zoom);
+    const url = 'https://tilecache.rainviewer.com' + frame.path + '/256/' + zoom + '/' + t.tileX + '/' + t.tileY + '/2/1_1.png';
+    const img = await new Promise(function(resolve, reject) {
+      const im = new Image();
+      im.crossOrigin = 'anonymous';
+      im.onload = function() { resolve(im); };
+      im.onerror = function() { reject(new Error('tile load failed')); };
+      im.src = url;
+    });
+    const canvas = document.createElement('canvas');
+    canvas.width = 256; canvas.height = 256;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(img, 0, 0);
+    const x0 = Math.max(0, t.px - 4), y0 = Math.max(0, t.py - 4);
+    const w = Math.min(9, 256 - x0), h = Math.min(9, 256 - y0);
+    const data = ctx.getImageData(x0, y0, w, h).data;
+    for (let i = 3; i < data.length; i += 4) {
+      if (data[i] > 50) return true; // found a non-transparent (echo) pixel nearby
+    }
+    return false;
+  } catch (e) { return null; }
+}
+
+async function refreshRadarCheck() {
+  if (gLat === undefined) return;
+  const myLat = gLat, myLon = gLon;
+  const result = await checkRadarRainingNow(myLat, myLon);
+  if (myLat !== gLat || myLon !== gLon) return; // location changed while this was in flight
+  gRadarRainingNow = result;
+  applyRadarOverride();
+  updateRainTimer();
+}
+
+function applyRadarOverride() {
+  const loaded = document.getElementById('curr-loaded');
+  if (!loaded || loaded.style.display === 'none' || gCurrentWeatherCode === null) return;
+  const iconEl = document.getElementById('curr-icon');
+  const descEl = document.getElementById('curr-desc');
+  const isOverridden = descEl.textContent === 'Rain (seen on radar)';
+  if (gRadarRainingNow === true) {
+    if (isRainCode(gCurrentWeatherCode)) return; // model already agrees, nothing to override
+    iconEl.textContent = '🌧️';
+    descEl.textContent = 'Rain (seen on radar)';
+  } else if (isOverridden) {
+    // radar no longer sees rain here — revert to the model's own reading
+    iconEl.textContent = emoji(gCurrentWeatherCode);
+    descEl.textContent = desc(gCurrentWeatherCode);
+  }
 }
 
 // ── Weather Alerts (US only — National Weather Service) ────
@@ -535,6 +613,8 @@ function renderCurrent(c) {
   document.getElementById('d-wind').textContent = Math.round(c.wind_speed_10m) + ' mph';
   document.getElementById('d-dir').textContent = compass(c.wind_direction_10m);
   document.getElementById('tab-current').style.background = bgGradient(c.weather_code, c.is_day);
+  gCurrentWeatherCode = c.weather_code;
+  applyRadarOverride();
 }
 
 function bgGradient(code, isDay) {
@@ -579,8 +659,16 @@ function updateRainTimer() {
     if (gMinutely[i].time <= now) idx = i; else break;
   }
   const isRaining = s => s.precip >= THRESH && isRainCode(s.code);
-  const rainingNow = isRaining(gMinutely[idx]);
+  const modelRainingNow = isRaining(gMinutely[idx]);
 
+  if (gRadarRainingNow === true && !modelRainingNow) {
+    // Radar sees active precip that the forecast model missed entirely —
+    // no reliable stop estimate exists, so don't pretend the model's timeline applies.
+    renderRainTimer({ mode: 'raining-indef' });
+    return;
+  }
+
+  const rainingNow = modelRainingNow;
   let transitionIdx = -1;
   for (let i = idx + 1; i < gMinutely.length; i++) {
     if (isRaining(gMinutely[i]) !== rainingNow) { transitionIdx = i; break; }
