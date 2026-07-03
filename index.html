@@ -61,6 +61,16 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:-apple-
 #tab-current::before{content:'';position:absolute;inset:0;pointer-events:none;opacity:.05;mix-blend-mode:overlay;background-size:140px 140px;
   background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E")}
 #curr-empty,#curr-loaded{position:relative}
+#alerts-wrap:empty{display:none}
+#alerts-wrap{margin-bottom:14px}
+.alert-card{background:rgba(10,16,26,.55);border-left:4px solid #94a3b8;border-radius:10px;margin-bottom:8px;overflow:hidden;backdrop-filter:blur(2px)}
+.alert-head{display:flex;align-items:center;gap:8px;padding:11px 12px;cursor:pointer;user-select:none}
+.alert-icon{font-size:18px;flex-shrink:0}
+.alert-event{flex:1;font-weight:700;font-size:13.5px;color:#fff;text-shadow:0 1px 2px rgba(0,0,0,.5)}
+.alert-chev{font-size:16px;color:var(--sub);transition:transform .2s;flex-shrink:0}
+.alert-card.open .alert-chev{transform:rotate(90deg)}
+.alert-detail{display:none;padding:0 12px 12px;font-size:12.5px;color:#dbe6f2;line-height:1.55}
+.alert-card.open .alert-detail{display:block}
 #loc-name{font-size:20px;font-weight:700;color:var(--blue);margin-bottom:16px;text-shadow:0 1px 3px rgba(0,0,0,.35)}
 #curr-wrap{display:flex;flex-direction:column;margin-bottom:20px}
 #curr-icon{font-size:68px;line-height:1;margin-bottom:4px}
@@ -155,6 +165,7 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:-apple-
         <p>Search for a city or zip code to get started.</p>
       </div>
       <div id="curr-loaded" style="display:none">
+        <div id="alerts-wrap"></div>
         <div id="loc-name"></div>
         <div id="curr-wrap">
           <div id="curr-icon"></div>
@@ -219,10 +230,12 @@ let gLat, gLon, gName;
 let allHourly = [];
 let gMinutely = [];
 let rainTimerHandle = null;
+let gAlerts = [];
 let radarMap = null, radarLayers = [], radarFrameData = [];
 let radarCur = 0, radarPlaying = true, radarTimer = null;
 let openDayEl = null;
 let followWatchId = null;
+let followActive = false;
 
 // ── History ────────────────────────────────────────────────
 function histLoad() {
@@ -262,7 +275,7 @@ function selectHist(loc) {
 async function doSearch() {
   const loc = document.getElementById('search-input').value.trim();
   if (!loc) return;
-  if (followEnabled()) { setFollowEnabled(false); document.getElementById('follow-chk').checked = false; }
+  if (followEnabled()) { setFollowEnabled(false); document.getElementById('follow-chk').checked = false; stopFollow(); }
   document.getElementById('history-drop').hidden = true;
   document.getElementById('search-input').blur();
   setStatus('Loading…', 'gray');
@@ -278,15 +291,18 @@ async function doSearch() {
 }
 
 async function loadWeather() {
-  const [curr, hourly, daily, minutely] = await Promise.all([
+  const [curr, hourly, daily, minutely, alerts] = await Promise.all([
     fetchCurrent(gLat, gLon),
     fetchHourly(gLat, gLon),
     fetchDaily(gLat, gLon),
-    fetchMinutely(gLat, gLon)
+    fetchMinutely(gLat, gLon),
+    fetchAlerts(gLat, gLon)
   ]);
   allHourly = hourly;
   gMinutely = minutely;
+  gAlerts = alerts;
   renderCurrent(curr);
+  renderAlerts(gAlerts);
   const cutoff = new Date(Date.now() - 30*60*1000);
   renderHourly(allHourly.filter(h => h.time >= cutoff).slice(0, 24));
   renderDaily(daily);
@@ -294,6 +310,65 @@ async function loadWeather() {
   if (rainTimerHandle) clearInterval(rainTimerHandle);
   updateRainTimer();
   rainTimerHandle = setInterval(updateRainTimer, 15000);
+}
+
+// ── Weather Alerts (US only — National Weather Service) ────
+async function fetchAlerts(lat, lon) {
+  try {
+    const r = await fetch('https://api.weather.gov/alerts/active?point=' + lat + ',' + lon);
+    if (!r.ok) return [];
+    const d = await r.json();
+    return (d.features || []).map(function(f) {
+      const p = f.properties;
+      return { event: p.event, severity: p.severity, headline: p.headline, description: p.description, expires: p.expires };
+    });
+  } catch (e) { return []; }
+}
+
+function alertRank(sev) {
+  return { Extreme: 0, Severe: 1, Moderate: 2, Minor: 3 }[sev];
+}
+function alertColor(sev) {
+  if (sev === 'Extreme' || sev === 'Severe') return '#f87171';
+  if (sev === 'Moderate') return '#fb923c';
+  if (sev === 'Minor') return '#facc15';
+  return '#94a3b8';
+}
+function alertIcon(event) {
+  const e = event.toLowerCase();
+  if (e.includes('tornado')) return '🌪️';
+  if (e.includes('flood')) return '🌊';
+  if (e.includes('thunderstorm')) return '⛈️';
+  if (e.includes('hurricane') || e.includes('tropical')) return '🌀';
+  if (e.includes('winter') || e.includes('snow') || e.includes('ice') || e.includes('freeze')) return '❄️';
+  if (e.includes('heat')) return '🥵';
+  if (e.includes('wind')) return '💨';
+  if (e.includes('fire') || e.includes('smoke')) return '🔥';
+  return '⚠️';
+}
+
+function escapeHtml(s) {
+  return (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function renderAlerts(alerts) {
+  const wrap = document.getElementById('alerts-wrap');
+  if (!alerts.length) { wrap.innerHTML = ''; return; }
+  const sorted = alerts.slice().sort(function(a, b) { return (alertRank(a.severity) ?? 4) - (alertRank(b.severity) ?? 4); });
+  wrap.innerHTML = sorted.map(function(a, i) {
+    const color = alertColor(a.severity);
+    const icon = alertIcon(a.event);
+    const detail = escapeHtml((a.description || a.headline || '').replace(/\n+/g, ' ').trim());
+    const exp = a.expires ? ('Until ' + fmtTime(new Date(a.expires))) : '';
+    return '<div class="alert-card" style="border-left-color:' + color + '">' +
+      '<div class="alert-head" onclick="this.parentElement.classList.toggle(\'open\')">' +
+        '<span class="alert-icon">' + icon + '</span>' +
+        '<span class="alert-event">' + escapeHtml(a.event) + '</span>' +
+        '<span class="alert-chev">›</span>' +
+      '</div>' +
+      '<div class="alert-detail">' + detail + (exp ? ' <strong>(' + exp + ')</strong>' : '') + '</div>' +
+    '</div>';
+  }).join('');
 }
 
 // ── Geolocation ────────────────────────────────────────────
@@ -342,17 +417,24 @@ function toggleFollow(checked) {
 
 function startFollow() {
   if (!navigator.geolocation) { setStatus('Geolocation not supported', 'red'); return; }
+  followActive = true;
   useMyLocation();
   if (followWatchId !== null) return;
   followWatchId = navigator.geolocation.watchPosition(function(pos) {
+    if (!followActive) return;
     const moved = gLat === undefined || distMiles(gLat, gLon, pos.coords.latitude, pos.coords.longitude) > 2;
     if (!moved) return;
     gLat = pos.coords.latitude; gLon = pos.coords.longitude;
-    reverseGeocode(gLat, gLon).then(function(name) { gName = name; loadWeather(); });
+    reverseGeocode(gLat, gLon).then(function(name) {
+      if (!followActive) return;
+      gName = name;
+      loadWeather();
+    });
   }, function() { /* keep last known position on watch errors */ }, { enableHighAccuracy: false, maximumAge: 300000, timeout: 20000 });
 }
 
 function stopFollow() {
+  followActive = false;
   if (followWatchId !== null) { navigator.geolocation.clearWatch(followWatchId); followWatchId = null; }
 }
 
