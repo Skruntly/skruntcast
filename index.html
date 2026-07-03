@@ -29,6 +29,10 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:-apple-
 #search-input{flex:1;background:#1b2740;border:1px solid rgba(255,255,255,0.1);border-radius:10px;color:var(--text);font-size:16px;padding:9px 13px;outline:none}
 #search-input::placeholder{color:#4a607a}
 #search-btn{background:var(--accent);border:none;border-radius:10px;color:#fff;font-size:17px;padding:9px 16px;cursor:pointer;font-weight:700}
+#locate-btn{background:#1b2740;border:1px solid rgba(255,255,255,0.1);border-radius:10px;color:var(--text);font-size:16px;padding:9px 12px;cursor:pointer}
+#locate-btn:active{opacity:.6}
+#follow-row{display:flex;align-items:center;gap:6px;margin-top:7px;font-size:12px;color:var(--sub);cursor:pointer;user-select:none}
+#follow-row input{accent-color:var(--accent);width:14px;height:14px}
 #status-line{font-size:12px;color:var(--sub);margin-top:5px;min-height:15px}
 #history-drop{background:#1b2740;border:1px solid rgba(255,255,255,0.1);border-radius:10px;margin-top:5px;overflow:hidden}
 #history-drop[hidden]{display:none}
@@ -131,7 +135,12 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:-apple-
     <div id="search-row">
       <input id="search-input" type="text" placeholder="City or zip code…" autocomplete="off" autocorrect="off" spellcheck="false">
       <button id="search-btn" onclick="doSearch()"><span style="display:inline-block;transform:scaleX(-1)">&#x2315;</span></button>
+      <button id="locate-btn" onclick="useMyLocation()" title="Use my location">📍</button>
     </div>
+    <label id="follow-row">
+      <input type="checkbox" id="follow-chk" onchange="toggleFollow(this.checked)">
+      <span>Follow my location</span>
+    </label>
     <div id="history-drop" hidden></div>
     <div id="status-line"></div>
   </div>
@@ -213,6 +222,7 @@ let rainTimerHandle = null;
 let radarMap = null, radarLayers = [], radarFrameData = [];
 let radarCur = 0, radarPlaying = true, radarTimer = null;
 let openDayEl = null;
+let followWatchId = null;
 
 // ── History ────────────────────────────────────────────────
 function histLoad() {
@@ -252,33 +262,105 @@ function selectHist(loc) {
 async function doSearch() {
   const loc = document.getElementById('search-input').value.trim();
   if (!loc) return;
+  if (followEnabled()) { setFollowEnabled(false); document.getElementById('follow-chk').checked = false; }
   document.getElementById('history-drop').hidden = true;
   document.getElementById('search-input').blur();
   setStatus('Loading…', 'gray');
   try {
     const geo = await geocode(loc);
     gLat = geo.lat; gLon = geo.lon; gName = geo.name;
-    const [curr, hourly, daily, minutely] = await Promise.all([
-      fetchCurrent(gLat, gLon),
-      fetchHourly(gLat, gLon),
-      fetchDaily(gLat, gLon),
-      fetchMinutely(gLat, gLon)
-    ]);
-    allHourly = hourly;
-    gMinutely = minutely;
-    renderCurrent(curr);
-    const cutoff = new Date(Date.now() - 30*60*1000);
-    renderHourly(allHourly.filter(h => h.time >= cutoff).slice(0, 24));
-    renderDaily(daily);
-    initRadar();
+    await loadWeather();
     histAdd(loc);
-    if (rainTimerHandle) clearInterval(rainTimerHandle);
-    updateRainTimer();
-    rainTimerHandle = setInterval(updateRainTimer, 15000);
     setStatus('Updated ' + fmtTime(new Date()), 'green');
   } catch(e) {
     setStatus('Error: ' + e.message, 'red');
   }
+}
+
+async function loadWeather() {
+  const [curr, hourly, daily, minutely] = await Promise.all([
+    fetchCurrent(gLat, gLon),
+    fetchHourly(gLat, gLon),
+    fetchDaily(gLat, gLon),
+    fetchMinutely(gLat, gLon)
+  ]);
+  allHourly = hourly;
+  gMinutely = minutely;
+  renderCurrent(curr);
+  const cutoff = new Date(Date.now() - 30*60*1000);
+  renderHourly(allHourly.filter(h => h.time >= cutoff).slice(0, 24));
+  renderDaily(daily);
+  initRadar();
+  if (rainTimerHandle) clearInterval(rainTimerHandle);
+  updateRainTimer();
+  rainTimerHandle = setInterval(updateRainTimer, 15000);
+}
+
+// ── Geolocation ────────────────────────────────────────────
+function getPosition(opts) {
+  return new Promise(function(resolve, reject) {
+    if (!navigator.geolocation) { reject(new Error('Geolocation not supported')); return; }
+    navigator.geolocation.getCurrentPosition(resolve, reject, opts || { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 });
+  });
+}
+
+async function reverseGeocode(lat, lon) {
+  try {
+    const r = await fetch('https://nominatim.openstreetmap.org/reverse?format=json&lat=' + lat + '&lon=' + lon + '&zoom=10');
+    const d = await r.json();
+    const a = d.address || {};
+    const city = a.city || a.town || a.village || a.hamlet || a.county || 'Current Location';
+    const iso = a['ISO3166-2-lvl4'];
+    const state = iso ? iso.split('-')[1] : '';
+    return state ? (city + ', ' + state) : city;
+  } catch (e) { return 'Current Location'; }
+}
+
+async function useMyLocation() {
+  document.getElementById('history-drop').hidden = true;
+  setStatus('Locating…', 'gray');
+  try {
+    const pos = await getPosition();
+    gLat = pos.coords.latitude; gLon = pos.coords.longitude;
+    gName = await reverseGeocode(gLat, gLon);
+    document.getElementById('search-input').value = '';
+    await loadWeather();
+    setStatus('Updated ' + fmtTime(new Date()), 'green');
+  } catch (e) {
+    setStatus('Location error: ' + e.message, 'red');
+  }
+}
+
+function followEnabled() { return localStorage.getItem('sc_follow') === '1'; }
+
+function setFollowEnabled(on) { localStorage.setItem('sc_follow', on ? '1' : '0'); }
+
+function toggleFollow(checked) {
+  setFollowEnabled(checked);
+  if (checked) startFollow(); else stopFollow();
+}
+
+function startFollow() {
+  if (!navigator.geolocation) { setStatus('Geolocation not supported', 'red'); return; }
+  useMyLocation();
+  if (followWatchId !== null) return;
+  followWatchId = navigator.geolocation.watchPosition(function(pos) {
+    const moved = gLat === undefined || distMiles(gLat, gLon, pos.coords.latitude, pos.coords.longitude) > 2;
+    if (!moved) return;
+    gLat = pos.coords.latitude; gLon = pos.coords.longitude;
+    reverseGeocode(gLat, gLon).then(function(name) { gName = name; loadWeather(); });
+  }, function() { /* keep last known position on watch errors */ }, { enableHighAccuracy: false, maximumAge: 300000, timeout: 20000 });
+}
+
+function stopFollow() {
+  if (followWatchId !== null) { navigator.geolocation.clearWatch(followWatchId); followWatchId = null; }
+}
+
+function distMiles(lat1, lon1, lat2, lon2) {
+  const R = 3958.8;
+  const dLat = (lat2 - lat1) * Math.PI / 180, dLon = (lon2 - lon1) * Math.PI / 180;
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLon / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
 // ── API ────────────────────────────────────────────────────
@@ -632,8 +714,15 @@ document.addEventListener('DOMContentLoaded', function() {
   input.addEventListener('blur', function(){ setTimeout(function(){ document.getElementById('history-drop').hidden = true; }, 200); });
   input.addEventListener('keydown', function(e){ if (e.key === 'Enter') doSearch(); });
 
-  var h = histLoad();
-  if (h.length) { input.value = h[0]; doSearch(); }
+  var followChk = document.getElementById('follow-chk');
+  followChk.checked = followEnabled();
+
+  if (followEnabled()) {
+    startFollow();
+  } else {
+    var h = histLoad();
+    if (h.length) { input.value = h[0]; doSearch(); }
+  }
 });
 </script>
 </body>
